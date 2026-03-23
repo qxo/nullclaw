@@ -11,7 +11,25 @@
           },
           "config": {
             "allow_from": ["*"],
-            "group_policy": "allowlist"
+            "group_policy": "allowlist",
+            "enable_media": true,
+            "enable_voice": true,
+            "enable_video": true,
+            "enable_file": true,
+            "auto_reply": {
+              "enabled": true,
+              "message": "感谢您的消息，我会尽快回复。"
+            },
+            "message_filter": {
+              "enabled": false,
+              "keywords": ["广告", "推广"],
+              "mode": "block"
+            },
+            "polling_interval": 1000,
+            "max_retries": 3,
+            "timeout_ms": 30000,
+            "save_messages": true,
+            "message_dir": "~/.nullclaw/workspace/wechat"
           }
         }
       }

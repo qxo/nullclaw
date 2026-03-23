@@ -6,6 +6,7 @@
   "main": "nullclaw-plugin-wechat-ilink.js",
   "scripts": {
     "start": "node nullclaw-plugin-wechat-ilink.js",
+    "cli": "node wechat-cli.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [

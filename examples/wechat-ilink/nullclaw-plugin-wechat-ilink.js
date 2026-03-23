@@ -23,8 +23,29 @@ class WeChatPlugin {
     this.session = null;
     this.config = {
       allowFrom: ['*'],
-      groupPolicy: 'allowlist'
+      groupPolicy: 'allowlist',
+      enableMedia: true,
+      enableVoice: true,
+      enableVideo: true,
+      enableFile: true,
+      autoReply: {
+        enabled: true,
+        message: '感谢您的消息，我会尽快回复。'
+      },
+      messageFilter: {
+        enabled: false,
+        keywords: [],
+        mode: 'block' // 'block' or 'allow'
+      },
+      pollingInterval: 1000, // 消息轮询间隔（毫秒）
+      maxRetries: 3, // 最大重试次数
+      timeoutMs: 30000, // 请求超时时间（毫秒）
+      saveMessages: true, // 是否保存消息到本地
+      messageDir: path.join(HOME_DIR, '.nullclaw', 'workspace', 'wechat') // 消息保存目录
     };
+    
+    // 处理配置中的相对路径
+    this._processConfigPaths();
     this.messageIdCounter = 0;
     this.seenMessageIds = new Set();
     this.isRunning = false;
@@ -34,6 +55,52 @@ class WeChatPlugin {
     // Set up signal handlers
     process.on('SIGINT', () => this.signalHandler());
     process.on('SIGTERM', () => this.signalHandler());
+  }
+  
+  _processConfigPaths() {
+    if (this.config.messageDir && this.config.messageDir.startsWith('~/')) {
+      this.config.messageDir = path.join(HOME_DIR, this.config.messageDir.substring(2));
+    }
+  }
+  
+  _mergeConfig(userConfig) {
+    if (!userConfig) return;
+    
+    const configMapping = {
+      'allow_from': 'allowFrom',
+      'group_policy': 'groupPolicy',
+      'enable_media': 'enableMedia',
+      'enable_voice': 'enableVoice',
+      'enable_video': 'enableVideo',
+      'enable_file': 'enableFile',
+      'auto_reply': 'autoReply',
+      'message_filter': 'messageFilter',
+      'polling_interval': 'pollingInterval',
+      'max_retries': 'maxRetries',
+      'timeout_ms': 'timeoutMs',
+      'save_messages': 'saveMessages',
+      'message_dir': 'messageDir'
+    };
+    
+    for (const [userKey, internalKey] of Object.entries(configMapping)) {
+      if (userConfig[userKey] !== undefined) {
+        const userValue = userConfig[userKey];
+        const internalValue = this.config[internalKey];
+        
+        if (typeof userValue === 'object' && !Array.isArray(userValue) && userValue !== null) {
+          if (typeof internalValue === 'object' && !Array.isArray(internalValue) && internalValue !== null) {
+            this.config[internalKey] = { ...internalValue, ...userValue };
+          } else {
+            this.config[internalKey] = { ...userValue };
+          }
+        } else {
+          this.config[internalKey] = userValue;
+        }
+      }
+    }
+    
+    this._processConfigPaths();
+    this.log(`Configuration merged successfully`);
   }
   
   log(message) {
@@ -148,100 +215,129 @@ class WeChatPlugin {
   async login() {
     this.log("\n🔐 开始微信扫码登录...\n");
 
-    // 1. 获取二维码
-    const qrResp = await this.apiGet(DEFAULT_BASE_URL, `ilink/bot/get_bot_qrcode?bot_type=${BOT_TYPE}`);
-    const qrcode = qrResp.qrcode;
-    const qrcodeUrl = qrResp.qrcode_img_content;
-
-    this.log("📱 请用微信扫描以下二维码：\n");
-
-    // 显示二维码 URL
-    this.log(`二维码 URL: ${qrcodeUrl}`);
-    this.log(`二维码标识: ${qrcode}`);
-    
-    // 在控制台直接显示二维码
     try {
-      this.log('生成二维码...');
-      const { default: qrcodeTerminal } = await import('qrcode-terminal');
-      
-      // 在控制台显示二维码（ASCII art）
-      console.error('\n');
-      qrcodeTerminal.generate(qrcodeUrl, { small: true }, (qr) => {
-        console.error(qr);
-      });
-      console.error('\n');
-      
-      this.log('✅ 二维码已显示在控制台，请用微信扫描。');
+      // 1. 获取二维码
+      this.log('正在获取登录二维码...');
+      const qrResp = await this.apiGet(DEFAULT_BASE_URL, `ilink/bot/get_bot_qrcode?bot_type=${BOT_TYPE}`);
+      const qrcode = qrResp.qrcode;
+      const qrcodeUrl = qrResp.qrcode_img_content;
+
+      if (!qrcode || !qrcodeUrl) {
+        throw new Error('无法获取二维码信息');
+      }
+
+      this.log("📱 请用微信扫描以下二维码：\n");
+
+      // 显示二维码 URL
       this.log(`二维码 URL: ${qrcodeUrl}`);
       this.log(`二维码标识: ${qrcode}`);
-    } catch (error) {
-      this.log(`⚠️  无法显示二维码: ${error.message}`);
-      this.log(`错误堆栈: ${error.stack}`);
-      this.log('请手动打开二维码 URL 进行扫描。');
-    }
+      
+      // 在控制台直接显示二维码
+      try {
+        this.log('生成二维码...');
+        const { default: qrcodeTerminal } = await import('qrcode-terminal');
+        
+        // 在控制台显示二维码（ASCII art）
+        console.error('\n');
+        qrcodeTerminal.generate(qrcodeUrl, { small: true }, (qr) => {
+          console.error(qr);
+        });
+        console.error('\n');
+        
+        this.log('✅ 二维码已显示在控制台，请用微信扫描。');
+        this.log(`二维码 URL: ${qrcodeUrl}`);
+        this.log(`二维码标识: ${qrcode}`);
+      } catch (error) {
+        this.log(`⚠️  无法显示二维码: ${error.message}`);
+        this.log(`错误堆栈: ${error.stack}`);
+        this.log('请手动打开二维码 URL 进行扫描。');
+      }
 
-    // 2. 轮询扫码状态
-    this.log("⏳ 等待扫码...");
-    const deadline = Date.now() + 5 * 60_000;
-    let refreshCount = 0;
-    let currentQrcode = qrcode;
-    let currentQrcodeUrl = qrcodeUrl;
+      // 2. 轮询扫码状态
+      this.log("⏳ 等待扫码...");
+      const deadline = Date.now() + 5 * 60_000;
+      let refreshCount = 0;
+      let currentQrcode = qrcode;
+      let currentQrcodeUrl = qrcodeUrl;
+      let lastStatus = '';
 
-    while (Date.now() < deadline) {
-      const statusResp = await this.apiGet(
-        DEFAULT_BASE_URL,
-        `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(currentQrcode)}`,
-      );
+      while (Date.now() < deadline) {
+        try {
+          const statusResp = await this.apiGet(
+            DEFAULT_BASE_URL,
+            `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(currentQrcode)}`,
+          );
 
-      switch (statusResp.status) {
-        case "wait":
-          process.stdout.write(".");
-          break;
-        case "scaned":
-          process.stdout.write("\n👀 已扫码，请在微信端确认...\n");
-          break;
-        case "expired": {
-          refreshCount++;
-          if (refreshCount > 3) {
-            throw new Error("二维码多次过期，请重新运行");
-          }
-          this.log(`\n⏳ 二维码过期，刷新中 (${refreshCount}/3)...`);
-          const newQr = await this.apiGet(DEFAULT_BASE_URL, `ilink/bot/get_bot_qrcode?bot_type=${BOT_TYPE}`);
-          currentQrcode = newQr.qrcode;
-          currentQrcodeUrl = newQr.qrcode_img_content;
-          this.log(`  新二维码 URL: ${currentQrcodeUrl}`);
-          break;
-        }
-        case "confirmed": {
-          this.log("\n✅ 登录成功！\n");
-          const tokenData = {
-            token: statusResp.bot_token,
-            baseUrl: statusResp.baseurl || DEFAULT_BASE_URL,
-            accountId: statusResp.ilink_bot_id,
-            userId: statusResp.ilink_user_id,
-            savedAt: new Date().toISOString(),
-          };
+          const status = statusResp.status;
           
-          // 确保目录存在
-          const tokenDir = path.dirname(TOKEN_FILE);
-          if (!fs.existsSync(tokenDir)) {
-            fs.mkdirSync(tokenDir, { recursive: true });
+          // 避免重复输出相同状态
+          if (status !== lastStatus) {
+            lastStatus = status;
+            switch (status) {
+              case "wait":
+                this.log("⏳ 等待扫码...");
+                break;
+              case "scaned":
+                this.log("👀 已扫码，请在微信端确认...");
+                break;
+              case "expired": {
+                refreshCount++;
+                if (refreshCount > this.config.maxRetries) {
+                  throw new Error(`二维码多次过期（${refreshCount}/${this.config.maxRetries}），请重新运行`);
+                }
+                this.log(`\n⏳ 二维码过期，刷新中 (${refreshCount}/${this.config.maxRetries})...`);
+                const newQr = await this.apiGet(DEFAULT_BASE_URL, `ilink/bot/get_bot_qrcode?bot_type=${BOT_TYPE}`);
+                currentQrcode = newQr.qrcode;
+                currentQrcodeUrl = newQr.qrcode_img_content;
+                this.log(`  新二维码 URL: ${currentQrcodeUrl}`);
+                break;
+              }
+              case "confirmed": {
+                this.log("\n✅ 登录成功！\n");
+                const tokenData = {
+                  token: statusResp.bot_token,
+                  baseUrl: statusResp.baseurl || DEFAULT_BASE_URL,
+                  accountId: statusResp.ilink_bot_id,
+                  userId: statusResp.ilink_user_id,
+                  savedAt: new Date().toISOString(),
+                };
+                
+                // 确保目录存在
+                const tokenDir = path.dirname(TOKEN_FILE);
+                if (!fs.existsSync(tokenDir)) {
+                  fs.mkdirSync(tokenDir, { recursive: true });
+                }
+                
+                fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokenData, null, 2), "utf-8");
+                fs.chmodSync(TOKEN_FILE, 0o600);
+                this.log(`  Bot ID : ${tokenData.accountId}`);
+                this.log(`  Base URL: ${tokenData.baseUrl}`);
+                this.log(`  Token 已保存到 ${TOKEN_FILE}\n`);
+                this.session = tokenData;
+                return true;
+              }
+              default:
+                this.log(`⚠️  未知状态: ${status}`);
+            }
           }
-          
-          fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokenData, null, 2), "utf-8");
-          fs.chmodSync(TOKEN_FILE, 0o600);
-          this.log(`  Bot ID : ${tokenData.accountId}`);
-          this.log(`  Base URL: ${tokenData.baseUrl}`);
-          this.log(`  Token 已保存到 ${TOKEN_FILE}\n`);
-          this.session = tokenData;
-          return true;
+
+          await new Promise((r) => setTimeout(r, 1000));
+        } catch (error) {
+          this.log(`⚠️  检查扫码状态时出错: ${error.message}`);
+          await new Promise((r) => setTimeout(r, 2000)); // 错误后等待更长时间
         }
       }
 
-      await new Promise((r) => setTimeout(r, 1000));
+      throw new Error("登录超时，请重新运行");
+    } catch (error) {
+      this.log(`\n❌ 登录失败: ${error.message}\n`);
+      this.log('请检查：');
+      this.log('1. 网络连接是否正常');
+      this.log('2. 微信账号状态是否正常');
+      this.log('3. 是否有防火墙或代理限制');
+      this.log('4. 如问题持续，请删除 token 文件后重试\n');
+      throw error;
     }
-
-    throw new Error("登录超时");
   }
   
   // ─── 消息收发 ─────────────────────────────────────────────────────────────────
@@ -292,16 +388,65 @@ class WeChatPlugin {
     return clientId;
   }
   
-  /** 从消息 item_list 提取纯文本 */
+  /** 从消息 item_list 提取消息内容和媒体信息 */
   extractText(msg) {
+    const result = {
+      text: '',
+      media: [],
+      hasMedia: false
+    };
+    
     for (const item of msg.item_list ?? []) {
-      if (item.type === 1 && item.text_item?.text) return item.text_item.text;
-      if (item.type === 3 && item.voice_item?.text) return `[语音] ${item.voice_item.text}`;
-      if (item.type === 2) return "[图片]";
-      if (item.type === 4) return `[文件] ${item.file_item?.file_name ?? ""}`;
-      if (item.type === 5) return "[视频]";
+      if (item.type === 1 && item.text_item?.text) {
+        result.text = item.text_item.text;
+      }
+      else if (item.type === 3 && item.voice_item?.text) {
+        result.text = `[语音] ${item.voice_item.text}`;
+        result.media.push({
+          type: 'voice',
+          text: item.voice_item.text,
+          duration: item.voice_item?.play_time
+        });
+        result.hasMedia = true;
+      }
+      else if (item.type === 2 && item.image_item) {
+        result.text = '[图片]';
+        result.media.push({
+          type: 'image',
+          url: item.image_item?.image_url,
+          width: item.image_item?.width,
+          height: item.image_item?.height,
+          size: item.image_item?.total_size
+        });
+        result.hasMedia = true;
+      }
+      else if (item.type === 4 && item.file_item) {
+        result.text = `[文件] ${item.file_item?.file_name ?? ""}`;
+        result.media.push({
+          type: 'file',
+          name: item.file_item?.file_name,
+          url: item.file_item?.file_url,
+          size: item.file_item?.total_size
+        });
+        result.hasMedia = true;
+      }
+      else if (item.type === 5 && item.video_item) {
+        result.text = '[视频]';
+        result.media.push({
+          type: 'video',
+          url: item.video_item?.video_url,
+          duration: item.video_item?.play_time,
+          size: item.video_item?.total_size
+        });
+        result.hasMedia = true;
+      }
     }
-    return "[空消息]";
+    
+    if (!result.text) {
+      result.text = "[空消息]";
+    }
+    
+    return result;
   }
   
   async pollMessages() {
@@ -322,9 +467,13 @@ class WeChatPlugin {
         // 只处理用户发来的消息（message_type=1）
         if (msg.message_type !== 1) continue;
 
-        const msgId = msg.client_id || `msg_${this.messageIdCounter++}`;
+        const currentMsgId = this.messageIdCounter++;
+        const msgId = msg.client_id || `msg_${currentMsgId}`;
         const from = msg.from_user_id;
-        const text = this.extractText(msg);
+        const chatId = msg.chat_id || from; // 支持群组消息
+        const extracted = this.extractText(msg);
+        const text = extracted.text;
+        const media = extracted.media;
         const contextToken = msg.context_token;
 
         if (this.seenMessageIds.has(msgId)) {
@@ -344,7 +493,24 @@ class WeChatPlugin {
           continue;
         }
 
-        this.log(`📩 收到消息: ${text}`);
+        // 检查是否为群组消息
+        const isGroup = chatId !== from;
+        if (isGroup && this.config.groupPolicy === 'allowlist' && !this._isAllowed(from)) {
+          this.log(`Group message from ${from} blocked by group policy`);
+          continue;
+        }
+
+        // 消息过滤
+        if (this.config.messageFilter.enabled) {
+          const shouldFilter = this._shouldFilterMessage(text);
+          if ((this.config.messageFilter.mode === 'block' && shouldFilter) ||
+              (this.config.messageFilter.mode === 'allow' && !shouldFilter)) {
+            this.log(`Message from ${from} filtered by message filter`);
+            continue;
+          }
+        }
+
+        this.log(`📩 收到消息: ${text}${isGroup ? ' (群组)' : ''}`);
 
         // Send inbound_message notification to nullclaw via stdout
         const notification = {
@@ -353,16 +519,31 @@ class WeChatPlugin {
           params: {
             message: {
               sender_id: from,
-              chat_id: from,
+              chat_id: chatId,
               text: text,
-              media: [],
-              metadata: { context_token: contextToken }
+              media: media,
+              metadata: { 
+                context_token: contextToken,
+                is_group: isGroup,
+                has_media: extracted.hasMedia
+              }
             }
           }
         };
 
         process.stdout.write(JSON.stringify(notification) + '\n');
         this.log(`Sent inbound_message notification for message ${msgId} from ${from}`);
+
+        // 保存消息到本地
+        const savedPath = await this._saveMessage(msg, extracted, isGroup, currentMsgId);
+        if (savedPath) {
+          this.log(`Message saved at: ${savedPath}`);
+        }
+
+        // 自动回复
+        if (this.config.autoReply.enabled && !isGroup) {
+          await this._sendAutoReply(chatId, text);
+        }
       }
     } catch (err) {
       if (err.message?.includes("session timeout") || err.message?.includes("-14")) {
@@ -403,6 +584,71 @@ class WeChatPlugin {
     return this.config.allowFrom.includes(sender);
   }
   
+  _shouldFilterMessage(text) {
+    if (!this.config.messageFilter.keywords || this.config.messageFilter.keywords.length === 0) {
+      return false;
+    }
+    
+    const lowerText = text.toLowerCase();
+    return this.config.messageFilter.keywords.some(keyword => 
+      lowerText.includes(keyword.toLowerCase())
+    );
+  }
+  
+  async _sendAutoReply(to, originalText) {
+    try {
+      this.log(`Sending auto reply to ${to}`);
+      await this.sendMessage(to, this.config.autoReply.message);
+      this.log(`Auto reply sent successfully to ${to}`);
+    } catch (error) {
+      this.log(`Failed to send auto reply: ${error.message}`);
+    }
+  }
+  
+  async _saveMessage(msg, extracted, isGroup, msgId) {
+    if (!this.config.saveMessages) {
+      return null;
+    }
+    
+    try {
+      const timestamp = new Date().toISOString();
+      const date = timestamp.split('T')[0];
+      const time = timestamp.split('T')[1].split('.')[0];
+      
+      const messageData = {
+        id: msg.client_id || `msg_${msgId}`,
+        timestamp: timestamp,
+        date: date,
+        time: time,
+        from: msg.from_user_id,
+        chat_id: msg.chat_id || msg.from_user_id,
+        is_group: isGroup,
+        text: extracted.text,
+        media: extracted.media,
+        has_media: extracted.hasMedia,
+        context_token: msg.context_token
+      };
+      
+      const filename = `msg_${msg.client_id || msgId}.json`;
+      const filepath = path.join(this.config.messageDir, date, filename);
+      
+      const dir = path.dirname(filepath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      
+      fs.writeFileSync(filepath, JSON.stringify(messageData, null, 2), 'utf-8');
+      this.log(`Message saved to: ${filepath}`);
+      
+      // 返回相对路径以减少 token 数量
+      const relativePath = path.join('wechat', date, filename);
+      return relativePath;
+    } catch (error) {
+      this.log(`Failed to save message: ${error.message}`);
+      return null;
+    }
+  }
+  
   async healthCheck() {
     if (!this.session) {
       return { healthy: false, status: 'not_logged_in' };
@@ -417,8 +663,14 @@ class WeChatPlugin {
     }
   }
   
-  async start() {
+  async start(params) {
     this.log('Received start request');
+    
+    // 处理配置参数
+    if (params && params.config) {
+      this._mergeConfig(params.config);
+    }
+    
     // 立即返回成功响应
     this.isRunning = true;
     
