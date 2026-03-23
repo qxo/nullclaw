@@ -1,0 +1,25 @@
+{
+  "name": "nullclaw-wechat-plugin",
+  "version": "1.0.0",
+  "description": "WeChat channel plugin for nullclaw",
+  "type": "module",
+  "main": "nullclaw-plugin-wechat-ilink.js",
+  "scripts": {
+    "start": "node nullclaw-plugin-wechat-ilink.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "nullclaw",
+    "wechat",
+    "channel",
+    "plugin"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0"
+  }
+}

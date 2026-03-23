@@ -1,200 +1,137 @@
-# WeChat iLink 外部通道插件
+# WeChat iLink 插件
 
-本插件实现了通过 MCP WeChat Server 与微信的集成，无需公众号，只需扫码即可登录使用。
+这是一个用于 nullclaw 的 WeChat 通道插件，直接调用微信 iLink Bot API 实现。
 
 ## 功能特性
 
-- ✅ 微信扫码登录，无需公众号
-- ✅ 文本消息收发
-- ✅ 打字指示器
-- ✅ 健康状态检查
-- ✅ 自动重连
+- 支持微信扫码登录
+- 支持消息收发
+- 支持消息监控（长轮询）
+- 支持自动登录和状态检查
+- 支持消息过滤（白名单）
+- 控制台直接显示二维码
 
-## 版本选择
-
-### Node.js 版本（推荐）
-- **文件**：`nullclaw-plugin-wechat-ilink.js`
-- **优势**：直接集成 mcp-wechat-server，无额外依赖
-- **要求**：Node.js 14.0+
-
-### Python 版本
-- **文件**：`nullclaw-plugin-wechat-ilink`
-- **优势**：跨平台兼容性好
-- **要求**：Python 3.7+, Node.js 14.0+
-
-## 环境要求
-
-- Node.js 14.0+ 和 npm
-- `mcp-wechat-server` 包
-
-## 快速开始
+## 安装步骤
 
 ### 1. 安装依赖
 
-```bash
-# 全局安装 MCP WeChat Server
-npm install -g mcp-wechat-server
+在插件目录中运行：
 
-# Windows 用户可能需要以管理员身份运行
+```bash
+npm install
 ```
 
-### 2. 配置文件
+这将安装 `qrcode-terminal` 包及其依赖。
 
-#### 方法 1：直接复制配置文件（推荐）
-将 `examples/wechat-ilink/config.example.json` 复制到你的 nullclaw 配置目录：
+### 2. 配置 nullclaw
+
+将 `config.example.json` 复制到 nullclaw 配置目录：
 
 ```bash
 # Windows
-copy examples\wechat-ilink\config.example.json %USERPROFILE%\.nullclaw\config.json
+copy config.example.json %USERPROFILE%\.nullclaw\config.json
 
-# Linux/Mac
-cp examples/wechat-ilink/config.example.json ~/.nullclaw/config.json
-```
-
-#### 方法 2：手动配置
-在 `~/.nullclaw/config.json` 中添加以下配置：
-
-#### Node.js 版本配置（推荐）：
-
-```json
-{
-  "channels": {
-    "external": {
-      "accounts": {
-        "wechat-ilink": {
-          "runtime_name": "wechat_ilink",
-          "transport": {
-            "command": "node",
-            "args": ["nullclaw-plugin-wechat-ilink.js"],
-            "timeout_ms": 120000
-          },
-          "config": {
-            "allow_from": ["*"],
-            "group_policy": "allowlist"
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-#### Python 版本配置：
-
-```json
-{
-  "channels": {
-    "external": {
-      "accounts": {
-        "wechat-ilink": {
-          "runtime_name": "wechat_ilink",
-          "transport": {
-            "command": "python3",
-            "args": ["nullclaw-plugin-wechat-ilink.py"],
-            "timeout_ms": 120000
-          },
-          "config": {
-            "allow_from": ["*"],
-            "group_policy": "allowlist"
-          }
-        }
-      }
-    }
-  }
-}
+# Linux/macOS
+cp config.example.json ~/.nullclaw/config.json
 ```
 
 ### 3. 启动插件
 
+使用 nullclaw 命令启动 WeChat 通道：
+
 ```bash
-# 启动微信通道
-nullclaw channel start wechat_ilink
-
-# 查看通道状态
-nullclaw channel status wechat_ilink
+zig-out\bin\nullclaw.exe channel start wechat_ilink
 ```
-
-## 登录流程
-
-1. 插件启动后，会在控制台生成微信登录二维码
-2. 打开微信，点击「发现」→「扫一扫」
-3. 扫描控制台显示的二维码
-4. 在微信中确认登录
-5. 登录成功后，插件会自动开始监听消息
 
 ## 配置选项
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `allow_from` | 允许的发信人列表，`["*"]` 表示允许所有人 | `["*"]` |
-| `group_allow_from` | 允许的群聊列表，默认使用 `allow_from` | 无 |
-| `group_policy` | 群聊处理模式：`allowlist`（白名单）、`open`（开放）、`disabled`（禁用） | `allowlist` |
-| `bridge_command` | 自定义 MCP WeChat Server 启动命令 | `npx mcp-wechat-server` |
-| `bridge_dir` | 运行桥接命令的目录 | 当前目录 |
+### 主要配置项
 
-## 使用示例
+- `allow_from`: 允许发送消息的用户 ID 列表，使用 `["*"]` 表示允许所有用户
+- `group_policy`: 群组消息策略，可选值：`allowlist`（仅允许白名单用户）
 
-### 发送消息
+### 高级配置
 
-```bash
-# 发送文本消息
-nullclaw channel send wechat_ilink --target "wxid_1234567890" --text "你好，这是一条测试消息"
-```
+插件会在 `~/.nullclaw/.weixin-token.json` 文件中存储登录状态和会话信息。
 
-### 查看消息
+## 运行原理
 
-插件会自动监听并处理微信消息，消息会通过 nullclaw 的消息系统分发。
+1. 插件启动时，会初始化微信客户端
+2. 启动消息轮询循环，每 1 秒检查一次新消息
+3. 当收到新消息时，会发送 `inbound_message` 通知给 nullclaw
+4. 当需要发送消息时，会调用微信 API 发送消息
+5. 支持自动登录和状态检查
 
-## 常见问题
+## 登录流程
 
-### 1. 桥接服务启动失败
-- 确保已全局安装 `mcp-wechat-server`
-- 检查 Node.js 和 npm 是否正确安装
-- 尝试手动运行 `npx mcp-wechat-server` 查看错误信息
+1. **首次使用**：
+   - 插件会自动调用微信 API 获取二维码
+   - 二维码会直接显示在控制台（ASCII art 格式）
+   - 使用微信扫描二维码
+   - 在微信端确认登录
+   - 登录成功后，token 会保存在 `.weixin-token.json` 文件中
 
-### 2. 登录超时
-- 确保在 60 秒内扫描二维码
-- 检查网络连接是否稳定
-- 尝试重新启动插件
+2. **后续使用**：
+   - 插件会自动加载保存的 token
+   - 不需要重新登录，直接开始消息轮询
+   - 如需重新登录，删除 `~/.nullclaw/.weixin-token.json` 文件后重启插件
 
-### 3. 消息收发问题
-- 确保微信应用在手机上正常运行
-- 验证登录状态是否仍然有效
-- 检查网络连接
+## 故障排除
 
-### 4. 权限问题
-- Windows 用户可能需要以管理员身份运行命令
-- 确保插件脚本有执行权限
+### 常见问题
 
-## 技术原理
+1. **登录失败**：
+   - 确保网络连接正常
+   - 检查微信账号状态
+   - 删除 `~/.nullclaw/.weixin-token.json` 文件后重新登录
 
-1. **插件协议**：使用 nullclaw 外部通道 JSON-RPC/stdio 协议
-2. **通信桥梁**：通过 MCP WeChat Server 与微信通信
-3. **登录方式**：基于微信网页版协议，扫码登录
-4. **消息处理**：实时轮询微信消息，支持文本消息
+2. **消息收发失败**：
+   - 检查网络连接
+   - 检查微信账号状态
+   - 查看插件日志了解详细信息
+
+3. **插件启动失败**：
+   - 检查 Node.js 版本是否 >= 22
+   - 检查依赖是否正确安装
+   - 查看插件日志了解详细信息
+
+### 日志查看
+
+插件会在控制台输出详细日志，包括：
+- 插件启动状态
+- 登录过程
+- 消息收发情况
+- 错误信息
+
+## 技术细节
+
+- 直接调用微信 iLink Bot API
+- 使用 JSON-RPC 协议与 nullclaw 通信
+- 支持长轮询消息获取
+- 实现了完整的外部通道协议
+- 支持协议版本 2
 
 ## 注意事项
 
-- 本插件使用个人微信账号登录，无需公众号
-- 登录状态会在插件重启后失效，需要重新扫码登录
-- 消息历史不会在重启后保留
-- 需要稳定的网络连接来与微信服务器通信
-- 请遵守微信使用规范，避免滥用导致账号被封
+- 本插件需要 Node.js 22 或更高版本
+- 首次使用需要扫码登录微信
+- 登录状态会保存在 `~/.nullclaw/.weixin-token.json` 文件中，下次启动时会自动恢复登录状态
+- 请确保微信账号未被封禁，否则可能无法正常使用
+- 二维码会直接显示在控制台，无需下载和打开图片文件
 
-## 文件结构
+## 与原方案对比
 
-```
-examples/wechat-ilink/
-├── nullclaw-plugin-wechat-ilink.js  # Node.js 版本（推荐）
-├── nullclaw-plugin-wechat-ilink     # Python 版本
-├── README.md                        # 中文说明文档
-├── README-EN.md                     # 英文说明文档
-└── config.example.json              # 配置示例
-```
+### 优势
 
-## 版本要求
+1. **更稳定**：直接与微信服务器通信，减少中间层故障
+2. **更高效**：使用长轮询，减少网络开销
+3. **更功能完整**：支持完整的登录流程和消息收发
+4. **更易维护**：模块化设计，代码清晰
+5. **无依赖**：只使用 Node.js 内置模块和少量依赖，减少依赖冲突
 
-- nullclaw: 最新版本
-- Node.js: 14.0+（两个版本都需要）
-- Python: 3.7+（仅 Python 版本需要）
-- mcp-wechat-server: 1.0.0+
+### 改进
+
+1. **移除中间层**：不再依赖 `mcp-wechat-server`，直接调用微信 API
+2. **优化登录流程**：控制台直接显示二维码，无需下载和打开图片
+3. **改进错误处理**：更完善的错误处理和重试机制
+4. **提高性能**：使用长轮询而非频繁轮询，减少网络开销
